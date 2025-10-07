@@ -10,6 +10,8 @@ from email.mime.text import MIMEText
 from email.utils import formataddr
 from string import Template
 from pathlib import Path
+import time
+from math import ceil
 
 
 # SMTP settings
@@ -37,7 +39,7 @@ def get_contacts_from_excel(filepath, template_text=None, doc=None, add_prefix=T
     if 'mall' in df.columns:
         prefixes = ("ТЦ", "ТРЦ", "ТРК", "ТД", "ТК", "Молл")
         # normalize column: replace quotes, turn NaN -> empty string, strip spaces
-        df['mall'] = df['mall'].fillna('').astype(str).str.replace('"', '', regex=False).str.strip()
+        df['mall'] = df['mall'].fillna('').astype(str).str.replace(r'[«»"]', '', regex=True).str.strip()
 
         if add_prefix:
             # build regex to detect any prefix at start, case-insensitive
@@ -119,10 +121,14 @@ def read_template(template_path):
         return Template(file.read())
 
 
-def send_emails(my_address, password, contacts, cc_addresses, brand, period, doc, template_text, display_name):
+def send_emails(my_address, password, contacts, cc_addresses, brand, period, doc, template_text, display_name, batch_size=25, pause_seconds=120, progress_callback=None):
+
     template = Template(template_text)
     context = ssl.create_default_context()
     cc_addresses = cc_addresses or []
+
+    total_contacts = len(contacts)
+    total_batches = ceil(total_contacts / batch_size)
 
     if SMTP_PROTOCOL == "SSL":
         server_cm = smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, context=context)
@@ -138,37 +144,50 @@ def send_emails(my_address, password, contacts, cc_addresses, brand, period, doc
 
         server.login(my_address, password)
 
-        for contact in contacts:
-            msg = MIMEMultipart()
-            
-            mall_name = contact['mall'].replace('"', '')
-            
-            message = template.safe_substitute(
-                NAME=contact['name'],
-                BRAND=brand,
-                PERIOD=period,
-                MALL=mall_name,
-                RIM=contact.get('rim', ''),
-                LINK=contact.get('link', ''),
-                MIN=contact.get('min', ''),
-                SEC=contact.get('sec', ''),
-                DOC=doc or ""
-            )
+        for batch_index in range(total_batches):
+            start = batch_index * batch_size
+            end = min(start + batch_size, total_contacts)
+            batch_contacts = contacts[start:end]
 
-            contact_cc = contact.get('_cc_emails', [])
-            all_cc = list(set(cc_addresses + contact_cc))
-            
-            msg['From'] = formataddr((display_name, my_address))
-            msg['To'] = contact['email']
-            if all_cc:
-                msg['Cc'] = ", ".join(all_cc)
+            for contact in batch_contacts:
+                msg = MIMEMultipart()
+                mall_name = contact['mall'].replace('"', '')
 
-            msg['Subject'] = f"{mall_name} (г. {contact['city']}) // {brand} // {period}"
+                message = template.safe_substitute(
+                    NAME=contact['name'],
+                    BRAND=brand,
+                    PERIOD=period,
+                    MALL=mall_name,
+                    RIM=contact.get('rim', ''),
+                    LINK=contact.get('link', ''),
+                    MIN=contact.get('min', ''),
+                    SEC=contact.get('sec', ''),
+                    DOC=doc or ""
+                )
 
-            msg.attach(MIMEText(message, 'plain'))
-            recipients = [contact['email']] + all_cc
-            server.send_message(msg, from_addr=my_address, to_addrs=recipients)
-            del msg
+                contact_cc = contact.get('_cc_emails', [])
+                all_cc = list(set(cc_addresses + contact_cc))
+
+                msg['From'] = formataddr((display_name, my_address))
+                msg['To'] = contact['email']
+                if all_cc:
+                    msg['Cc'] = ", ".join(all_cc)
+                msg['Subject'] = f"{mall_name} (г. {contact['city']}) // {brand} // {period}"
+                msg.attach(MIMEText(message, 'plain'))
+
+                recipients = [contact['email']] + all_cc
+                server.send_message(msg, from_addr=my_address, to_addrs=recipients)
+                del msg
+
+            sent_count = end
+            if progress_callback:
+                progress_callback(batch_index + 1, total_batches, sent_count)
+
+            # Pause before next batch unless it’s the last one
+            if batch_index + 1 < total_batches:
+                print(f"Waiting {pause_seconds} seconds before next batch ({batch_index + 1}/{total_batches})...")
+                time.sleep(pause_seconds)
+
 
 
 def split_emails(email_str):
