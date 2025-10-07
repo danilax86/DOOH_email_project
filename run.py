@@ -67,7 +67,7 @@ def preview_excel():
     if not file:
         return "❌ Файл не загружен.", 400
 
-    ALLOWED_COLUMNS = ["email", "name", "city", "mall", "rim", "link", "min", "sec"]
+    ALLOWED_COLUMNS = ["email", "name", "city", "mall", "rim", "link", "min", "sec", "num", "size"]
 
     try:
         df = pd.read_excel(io.BytesIO(file.read()))
@@ -92,25 +92,35 @@ def preview_excel():
         add_prefix = request.form.get('add_tc_prefix', 'true').lower() == 'true'
 
         if 'mall' in df.columns:
-            def fix_mall(value):
-                if not value:
-                    return ''
-                prefixes = ("ТЦ", "ТРЦ", "ТРК", "ТД", "ТК")
-                if any(value.startswith(prefix) for prefix in prefixes):
-                    return value
-                return f"ТЦ {value}" if add_prefix else value
-            df['mall'] = df['mall'].str.replace('"', '', regex=False)
-            df['mall'] = df['mall'].apply(fix_mall)
+            prefixes = ("ТЦ", "ТРЦ", "ТРК", "ТД", "ТК", "Молл")
+            # normalize column: replace quotes, turn NaN -> empty string, strip spaces
+            df['mall'] = df['mall'].fillna('').astype(str).str.replace('"', '', regex=False).str.strip()
 
-        # Ensure 'name' exists, then default blanks
+            if add_prefix:
+                # build regex to detect any prefix at start, case-insensitive
+                pat = r'^(?:' + '|'.join(prefixes) + r')\b'
+                # mask of rows that don't already start with a prefix and are non-empty
+                mask = (~df['mall'].str.match(pat, case=False, na=False)) & (df['mall'] != '')
+                df.loc[mask, 'mall'] = 'ТЦ ' + df.loc[mask, 'mall']
+
         if 'name' not in df.columns:
             df['name'] = ''
         df.loc[df['name'] == '', 'name'] = 'Коллеги'
 
+        rims_required = {'rim', 'num', 'size', 'link', 'min', 'sec'}
+        if rims_required.issubset(df.columns):
+            print('rims are in place')
+            def format_rim_entry(row):
+                return (f"{row['rim']} {row['num']} шт. {row['size']} (ролик {row['sec']}сек в блоке {row['min']} мин.) фото: {row['link']}")
+            df['rim'] = df.apply(format_rim_entry, axis=1)
+
         if 'rim' in df.columns:
+            df['rim'] = df['rim'].astype(str).str.strip()
+            def join_rims(values):
+                return '\n'.join(v for v in values if v)
             df = (df.groupby(['city', 'mall', 'email', 'name'], as_index=False)
-                  .agg({'rim': lambda x: '\n'.join(map(str, x))}))
-            df['rim'] = df['rim'].astype(str).str.replace('\n', '<br>', regex=False)
+                  .agg({'rim': join_rims}))
+            df['rim'] = df['rim'].str.replace('\n', '<br>', regex=False)
 
         first_row = df.iloc[0].to_dict() if not df.empty else {}
         attrs = f'data-mall="{first_row.get("mall", "")}" data-city="{first_row.get("city", "")}"' if first_row else ""
@@ -145,12 +155,13 @@ def send():
     file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
     uploaded_file.save(file_path)
     template_text = request.form.get('message_template', '')
+    add_prefix = request.form.get('add_tc_prefix', 'true').lower() == 'true'
 
     if not display_name and my_address:
         display_name = my_address.split('@')[0].replace('.', ' ').title()
 
     try:
-        contacts = get_contacts_from_excel(file_path, template_text=template_text, doc=doc)
+        contacts = get_contacts_from_excel(file_path, template_text=template_text, doc=doc, add_prefix=add_prefix)
         send_emails(
             my_address=my_address,
             password=password,

@@ -18,16 +18,41 @@ SMTP_PORT = int(os.getenv("SMTP_PORT", "465"))
 SMTP_PROTOCOL = os.getenv("SMTP_PROTOCOL", "SSL").upper()
 
 
-def get_contacts_from_excel(filepath, template_text=None, doc=None):
+def get_contacts_from_excel(filepath, template_text=None, doc=None, add_prefix=True):
     df = pd.read_excel(filepath)
-    cols = [c for c in ['email', 'name', 'mall', 'city', 'rim'] if c in df.columns]
-    if 'email' not in cols:
+    if 'email' not in df.columns:
         raise ValueError("❌ Нет обязательного столбца: email")
     
-    df = df[cols].fillna('').astype(str).apply(lambda x: x.str.strip())
-    
-    
+    df = df.fillna('').astype(str).apply(lambda x: x.str.strip())
+        
     email_regex = r'^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$'
+
+    for col in ['email', 'name', 'mall', 'city', 'rim']:
+        if col in df.columns:
+            df[col] = df[col].fillna('').astype(str).str.strip()
+    
+    if 'name' in df.columns:
+        df.loc[df['name'] == '', 'name'] = 'Коллеги'
+
+    if 'mall' in df.columns:
+        prefixes = ("ТЦ", "ТРЦ", "ТРК", "ТД", "ТК", "Молл")
+        # normalize column: replace quotes, turn NaN -> empty string, strip spaces
+        df['mall'] = df['mall'].fillna('').astype(str).str.replace('"', '', regex=False).str.strip()
+
+        if add_prefix:
+            # build regex to detect any prefix at start, case-insensitive
+            pat = r'^(?:' + '|'.join(prefixes) + r')\b'
+            # mask of rows that don't already start with a prefix and are non-empty
+            mask = (~df['mall'].str.match(pat, case=False, na=False)) & (df['mall'] != '')
+            df.loc[mask, 'mall'] = 'ТЦ ' + df.loc[mask, 'mall']
+
+    rims_required = {'rim', 'num', 'size', 'link', 'min', 'sec'}
+    if rims_required.issubset(df.columns):
+        def format_rim_entry(row):
+            return (f"{row['rim']} {row['num']} шт. {row['size']} (ролик {row['sec']}сек в блоке {row['min']} мин.) фото: {row['link']}").strip()
+
+        df['rim'] = df.apply(format_rim_entry, axis=1)
+    
     contacts = []
     for idx, row in df.iterrows():
         parts = split_emails(row['email'])
@@ -49,13 +74,7 @@ def get_contacts_from_excel(filepath, template_text=None, doc=None):
         contacts.append(contact)
     
     df = pd.DataFrame(contacts)
-    for col in ['email', 'name', 'mall', 'city', 'rim']:
-        if col in df.columns:
-            df[col] = df[col].fillna('').astype(str).str.strip()
-    
-    if 'name' in df.columns:
-        df.loc[df['name'] == '', 'name'] = 'Коллеги'
-    
+
     # Group by city,mall,email,name and concatenate rim with newline
     if 'rim' in df.columns:
         agg_map = {'rim': lambda x: '\n'.join(filter(lambda v: v != '', map(str, x)))}
