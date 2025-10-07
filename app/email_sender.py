@@ -77,13 +77,50 @@ def get_contacts_from_excel(filepath, template_text=None, doc=None, add_prefix=T
     
     df = pd.DataFrame(contacts)
 
-    # Group by city,mall,email,name and concatenate rim with newline
-    if 'rim' in df.columns:
-        agg_map = {'rim': lambda x: '\n'.join(filter(lambda v: v != '', map(str, x)))}
-        if '_cc_emails' in df.columns:
-            agg_map['_cc_emails'] = lambda lists: list({email for lst in lists for email in (lst if isinstance(lst, list) else [lst]) if email})
-        df = df.groupby(['city', 'mall', 'email', 'name'], as_index=False).agg(agg_map)
+    if 'rim' in df.columns and 'mall' in df.columns:
+        combined_contacts = []
+        for email, email_df in df.groupby('email', as_index=False):
+            name = email_df['name'].iloc[0]
+            city = email_df['city'].iloc[0]
+            cc_emails = email_df['_cc_emails'].iloc[0] if '_cc_emails' in email_df.columns else []
 
+            mall_rims_list = []
+            mall_names_list = []
+
+            for mall_name, mall_df in email_df.groupby('mall', as_index=False):
+                # Add prefix if not already there
+                if add_prefix:
+                    prefixes = ("ТЦ", "ТРЦ", "ТРК", "ТД", "ТК", "Молл")
+                    pat = r'^(?:' + '|'.join(prefixes) + r')\b'
+                    if not re.match(pat, mall_name, re.IGNORECASE):
+                        mall_name_prefixed = "ТЦ " + mall_name
+                    else:
+                        mall_name_prefixed = mall_name
+                else:
+                    mall_name_prefixed = mall_name
+
+                mall_names_list.append(mall_name_prefixed)
+                rims_text = '\n'.join(mall_df['rim'].astype(str))
+                if email_df['mall'].nunique() > 1:
+                    mall_rims_list.append(f"{mall_name_prefixed}:\n{rims_text}")
+                else:
+                    mall_rims_list.append(rims_text)
+
+            rim_combined = "\n\n".join(mall_rims_list)
+            mall_combined = " и ".join(mall_names_list)
+
+            combined_contacts.append({
+                'email': email,
+                'name': name,
+                'city': city,
+                'rim': rim_combined,
+                'mall': mall_combined,
+                '_cc_emails': cc_emails
+            })
+
+        df = pd.DataFrame(combined_contacts)
+
+ 
     if template_text:
         required_map = {
             "RIM": "rim",
