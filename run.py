@@ -25,14 +25,13 @@ def index():
     if 'MY_ADDRESS' not in session or 'PASSWORD' not in session:
         return redirect(url_for('login'))
 
-    templates = {
-        'check': open('app/email_templates/check.txt', 'r', encoding='utf-8').read(),
-        'check_rim': open('app/email_templates/check_rim.txt', 'r', encoding='utf-8').read(),
-        'confirm': open('app/email_templates/confirm.txt', 'r', encoding='utf-8').read(),
-        'new_rim': open('app/email_templates/new_rim.txt', 'r', encoding='utf-8').read(),
-        'close': open('app/email_templates/close.txt', 'r', encoding='utf-8').read(),
-        'media': open('app/email_templates/media.txt', 'r', encoding='utf-8').read()
-    }
+    template_dir = os.path.join(app.root_path, 'app', 'email_templates')
+
+    templates = {}
+    for name in ['check', 'check_rim', 'confirm', 'new_rim', 'close', 'media']:
+        file_path = os.path.join(template_dir, f"{name}.txt")
+        with open(file_path, 'r', encoding='utf-8') as f:
+            templates[name] = f.read()
     return render_template('index.html', templates=templates, default_template=templates['new_rim'])
 
 
