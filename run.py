@@ -16,7 +16,7 @@ app = Flask(
     template_folder='app/templates',
     static_folder='app/static'
 )
-app.config['UPLOAD_FOLDER'] = 'app/data'
+app.config['UPLOAD_FOLDER'] = os.path.join(app.root_path, 'app', 'data')
 app.secret_key = os.urandom(24)
 
 
