@@ -1,0 +1,10 @@
+version: '3.8'
+
+services:
+  dooh:
+    build: .
+    image: dooh
+    container_name: DOOH
+    ports:
+      - "7860:5000"
+    restart: unless-stopped
