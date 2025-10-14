@@ -9,6 +9,7 @@ __pycache__/
 
 *.xlsx
 contacts.xlsx
+**/data/*.xlsx
 
 # Distribution / packaging
 .Python
