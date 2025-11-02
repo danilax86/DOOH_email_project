@@ -2,7 +2,11 @@
 
 import io
 from flask import Flask, render_template, request, jsonify, session, redirect, url_for
-from app.email_sender import send_emails, get_contacts_from_excel, pluralize
+import threading
+from uuid import uuid4
+import math
+import time
+from app.email_sender import send_batch, get_contacts_from_excel, pluralize
 import os
 from dotenv import load_dotenv
 from werkzeug.utils import secure_filename
@@ -18,6 +22,10 @@ app = Flask(
 )
 app.config['UPLOAD_FOLDER'] = os.path.join(app.root_path, 'app', 'data')
 app.secret_key = os.urandom(24)
+
+# simple in-memory job registry for background sending tasks
+# job structure: { 'status': str, 'batch': int, 'total': int or None, 'sent': int, 'error': str or None, 'done': bool }
+app.jobs = {}
 
 
 @app.route('/')
@@ -159,25 +167,83 @@ def send():
     if not display_name and my_address:
         display_name = my_address.split('@')[0].replace('.', ' ').title()
 
-    try:
-        contacts = get_contacts_from_excel(file_path, template_text=template_text, doc=doc, add_prefix=add_prefix)
-        send_emails(
-            my_address=my_address,
-            password=password,
-            contacts=contacts,
-            cc_addresses=cc_addresses,
-            brand=brand,
-            period=period,
-            doc=doc,
-            template_text=template_text,
-            display_name=display_name
-        )
-        count = len(contacts)
-        word = pluralize(count, ("адрес", "адреса", "адресов"))
-        status = f"✅ Письма успешно отправлены на {count} {word}."
-    except Exception as e:
-        status = f"❌ Ошибка: {str(e)}"
-    return render_template("status.html", status=status)
+    # run sending in a background thread to allow immediate response and progress polling
+    job_id = str(uuid4())
+    app.jobs[job_id] = {'status': 'Queued', 'batch': 0, 'total': None, 'sent': 0, 'error': None, 'done': False}
+
+    def run_job():
+        try:
+            contacts = get_contacts_from_excel(file_path, template_text=template_text, doc=doc, add_prefix=add_prefix)
+            total_contacts = len(contacts)
+            # read batch size and pause interval from the form (defaults)
+            try:
+                batch_size = int(request.form.get('batch_size', '25'))
+            except Exception:
+                batch_size = 1
+
+            try:
+                pause_seconds = int(request.form.get('pause_seconds', '90'))
+            except Exception:
+                pause_seconds = 90
+
+            total_batches = math.ceil(total_contacts / batch_size) if total_contacts > 0 else 0
+            app.jobs[job_id].update({'status': 'Running', 'total': total_batches})
+
+            cumulative_sent = 0
+            for batch_index in range(total_batches):
+                start = batch_index * batch_size
+                end = min(start + batch_size, total_contacts)
+                batch_contacts = contacts[start:end]
+
+                try:
+                    sent = send_batch(
+                        my_address=my_address,
+                        password=password,
+                        batch_contacts=batch_contacts,
+                        cc_addresses=cc_addresses,
+                        brand=brand,
+                        period=period,
+                        doc=doc,
+                        template_text=template_text,
+                        display_name=display_name
+                    )
+                except Exception as e:
+                    # record error and stop
+                    app.jobs[job_id].update({'status': f"❌ Ошибка при отправке: {str(e)}", 'error': str(e), 'done': True})
+                    return
+
+                cumulative_sent += sent
+                # update job state so clients can poll for progress
+                app.jobs[job_id].update({
+                    'status': f'Отправлено {batch_index + 1}/{total_batches}',
+                    'batch': batch_index + 1,
+                    'total': total_batches,
+                    'sent': cumulative_sent
+                })
+
+                if batch_index + 1 < total_batches:
+                    print(f"Waiting {pause_seconds} seconds before next batch ({batch_index + 1}/{total_batches})...")
+                    time.sleep(pause_seconds)
+
+            count = len(contacts)
+            word = pluralize(count, ("адрес", "адреса", "адресов"))
+            app.jobs[job_id].update({'status': f"✅ Письма успешно отправлены на {count} {word}.", 'done': True})
+        except Exception as e:
+            app.jobs[job_id].update({'status': f"❌ Ошибка: {str(e)}", 'error': str(e), 'done': True})
+
+    thread = threading.Thread(target=run_job, daemon=True)
+    thread.start()
+
+    # return a page that will poll for progress
+    return render_template("status.html", status="Письма отправляются...", job_id=job_id)
+
+
+@app.route('/send-status/<job_id>', methods=['GET'])
+def send_status(job_id):
+    job = app.jobs.get(job_id)
+    if not job:
+        return jsonify({'error': 'job not found'}), 404
+    return jsonify(job)
 
 
 if __name__ == '__main__':

@@ -158,7 +158,7 @@ def read_template(template_path):
         return Template(file.read())
 
 
-def send_emails(my_address, password, contacts, cc_addresses, brand, period, doc, template_text, display_name, batch_size=1, pause_seconds=120, progress_callback=None):
+def send_emails(my_address, password, contacts, cc_addresses, brand, period, doc, template_text, display_name, batch_size=25, pause_seconds=90, progress_callback=None):
 
     template = Template(template_text)
     context = ssl.create_default_context()
@@ -171,58 +171,88 @@ def send_emails(my_address, password, contacts, cc_addresses, brand, period, doc
         start = batch_index * batch_size
         end = min(start + batch_size, total_contacts)
         batch_contacts = contacts[start:end]
+        # For backward compatibility we'll still support internal batching here by
+        # delegating to the simpler `send_batch` primitive. This keeps SMTP open/close
+        # inside this module while allowing external orchestration to call send_batch
+        # directly.
+        sent = send_batch(
+            my_address=my_address,
+            password=password,
+            batch_contacts=batch_contacts,
+            cc_addresses=cc_addresses,
+            brand=brand,
+            period=period,
+            doc=doc,
+            template_text=template_text,
+            display_name=display_name
+        )
 
-        if SMTP_PROTOCOL == "SSL":
-            server_cm = smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, context=context)
-        else:
-            server_cm = smtplib.SMTP(SMTP_HOST, SMTP_PORT)
-
-        with server_cm as server:
-            server.set_debuglevel(1)
-            server.ehlo()
-            if SMTP_PROTOCOL == "STARTTLS":
-                server.starttls(context=context)
-                server.ehlo()
-
-            server.login(my_address, password)
-
-            for contact in batch_contacts:
-                msg = MIMEMultipart()
-                mall_name = contact['mall'].replace('"', '')
-
-                message = template.safe_substitute(
-                    NAME=contact['name'],
-                    BRAND=brand,
-                    PERIOD=period,
-                    MALL=mall_name,
-                    RIM=contact.get('rim', ''),
-                    LINK=contact.get('link', ''),
-                    MIN=contact.get('min', ''),
-                    SEC=contact.get('sec', ''),
-                    DOC=doc or ""
-                )
-
-                contact_cc = contact.get('_cc_emails', [])
-                all_cc = list(set(cc_addresses + contact_cc))
-
-                msg['From'] = formataddr((display_name, my_address))
-                msg['To'] = contact['email']
-                if all_cc:
-                    msg['Cc'] = ", ".join(all_cc)
-                msg['Subject'] = f"{mall_name} (г. {contact['city']}) // {brand} // {period}"
-                msg.attach(MIMEText(message, 'plain'))
-
-                recipients = [contact['email']] + all_cc
-                server.send_message(msg, from_addr=my_address, to_addrs=recipients)
-                del msg
-
-        sent_count = end
+        sent_count = (batch_index + 1) * batch_size if (batch_index + 1) * batch_size < total_contacts else total_contacts
         if progress_callback:
             progress_callback(batch_index + 1, total_batches, sent_count)
 
         if batch_index + 1 < total_batches:
             print(f"Waiting {pause_seconds} seconds before next batch ({batch_index + 1}/{total_batches})...")
             time.sleep(pause_seconds)
+
+
+def send_batch(my_address, password, batch_contacts, cc_addresses, brand, period, doc, template_text, display_name):
+    """Send a single batch of contacts. Opens SMTP connection, logs in, sends all
+    messages for batch_contacts, then closes the connection.
+
+    Returns number of messages sent (int). Raises exceptions on fatal errors.
+    """
+    template = Template(template_text)
+    context = ssl.create_default_context()
+    cc_addresses = cc_addresses or []
+
+    if SMTP_PROTOCOL == "SSL":
+        server_cm = smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, context=context)
+    else:
+        server_cm = smtplib.SMTP(SMTP_HOST, SMTP_PORT)
+
+    sent = 0
+    with server_cm as server:
+        server.set_debuglevel(1)
+        server.ehlo()
+        if SMTP_PROTOCOL == "STARTTLS":
+            server.starttls(context=context)
+            server.ehlo()
+
+        server.login(my_address, password)
+
+        for contact in batch_contacts:
+            msg = MIMEMultipart()
+            mall_name = contact.get('mall', '').replace('"', '')
+
+            message = template.safe_substitute(
+                NAME=contact.get('name', ''),
+                BRAND=brand,
+                PERIOD=period,
+                MALL=mall_name,
+                RIM=contact.get('rim', ''),
+                LINK=contact.get('link', ''),
+                MIN=contact.get('min', ''),
+                SEC=contact.get('sec', ''),
+                DOC=doc or ""
+            )
+
+            contact_cc = contact.get('_cc_emails', [])
+            all_cc = list(set(cc_addresses + contact_cc))
+
+            msg['From'] = formataddr((display_name, my_address))
+            msg['To'] = contact.get('email', '')
+            if all_cc:
+                msg['Cc'] = ", ".join(all_cc)
+            msg['Subject'] = f"{mall_name} (г. {contact.get('city','')}) // {brand} // {period}"
+            msg.attach(MIMEText(message, 'plain'))
+
+            recipients = [contact.get('email', '')] + all_cc
+            server.send_message(msg, from_addr=my_address, to_addrs=recipients)
+            del msg
+            sent += 1
+
+    return sent
 
 
 def split_emails(email_str):
