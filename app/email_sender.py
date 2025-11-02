@@ -158,7 +158,7 @@ def read_template(template_path):
         return Template(file.read())
 
 
-def send_emails(my_address, password, contacts, cc_addresses, brand, period, doc, template_text, display_name, batch_size=25, pause_seconds=120, progress_callback=None):
+def send_emails(my_address, password, contacts, cc_addresses, brand, period, doc, template_text, display_name, batch_size=1, pause_seconds=120, progress_callback=None):
 
     template = Template(template_text)
     context = ssl.create_default_context()
@@ -167,24 +167,24 @@ def send_emails(my_address, password, contacts, cc_addresses, brand, period, doc
     total_contacts = len(contacts)
     total_batches = ceil(total_contacts / batch_size)
 
-    if SMTP_PROTOCOL == "SSL":
-        server_cm = smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, context=context)
-    else:
-        server_cm = smtplib.SMTP(SMTP_HOST, SMTP_PORT)
+    for batch_index in range(total_batches):
+        start = batch_index * batch_size
+        end = min(start + batch_size, total_contacts)
+        batch_contacts = contacts[start:end]
 
-    with server_cm as server:
-        server.set_debuglevel(1)
-        server.ehlo()
-        if SMTP_PROTOCOL == "STARTTLS":
-            server.starttls(context=context)
+        if SMTP_PROTOCOL == "SSL":
+            server_cm = smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, context=context)
+        else:
+            server_cm = smtplib.SMTP(SMTP_HOST, SMTP_PORT)
+
+        with server_cm as server:
+            server.set_debuglevel(1)
             server.ehlo()
+            if SMTP_PROTOCOL == "STARTTLS":
+                server.starttls(context=context)
+                server.ehlo()
 
-        server.login(my_address, password)
-
-        for batch_index in range(total_batches):
-            start = batch_index * batch_size
-            end = min(start + batch_size, total_contacts)
-            batch_contacts = contacts[start:end]
+            server.login(my_address, password)
 
             for contact in batch_contacts:
                 msg = MIMEMultipart()
@@ -216,15 +216,13 @@ def send_emails(my_address, password, contacts, cc_addresses, brand, period, doc
                 server.send_message(msg, from_addr=my_address, to_addrs=recipients)
                 del msg
 
-            sent_count = end
-            if progress_callback:
-                progress_callback(batch_index + 1, total_batches, sent_count)
+        sent_count = end
+        if progress_callback:
+            progress_callback(batch_index + 1, total_batches, sent_count)
 
-            # Pause before next batch unless it’s the last one
-            if batch_index + 1 < total_batches:
-                print(f"Waiting {pause_seconds} seconds before next batch ({batch_index + 1}/{total_batches})...")
-                time.sleep(pause_seconds)
-
+        if batch_index + 1 < total_batches:
+            print(f"Waiting {pause_seconds} seconds before next batch ({batch_index + 1}/{total_batches})...")
+            time.sleep(pause_seconds)
 
 
 def split_emails(email_str):

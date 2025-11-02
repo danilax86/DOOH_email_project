@@ -35,4 +35,4 @@ RUN chown -R user:user /app
 USER user
 
 # Run the app with gunicorn
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "run:app", "--workers", "1", "--log-level", "debug"]
+CMD ["gunicorn", "--bind", "0.0.0.0:5000", "run:app", "--workers", "1", "--log-level", "debug", "--timeout", "0"]
