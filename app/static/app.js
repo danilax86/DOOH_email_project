@@ -97,6 +97,16 @@ function initPreviewHandlers() {
   const fileInput = document.getElementById("contacts_file");
   const addPrefix = document.getElementById("add-tc-prefix");
   if (fileInput) {
+    // Clear the input value on click so choosing a file with the same name
+    // will still fire the `change` event (browsers may not emit `change`
+    // if the same filename is selected twice in a row).
+    fileInput.addEventListener("click", e => {
+      // Clear the element value to ensure the browser treats the next selection
+      // as a change even if the filename is the same. Use empty string which
+      // is more compatible across browsers than null.
+      try { e.target.value = ''; uploadedFile = null; } catch (err) { /* ignore */ }
+    });
+
     fileInput.addEventListener("change", e => {
       uploadedFile = e.target.files[0];
       previewExcel(uploadedFile);

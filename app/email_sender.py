@@ -37,7 +37,7 @@ def get_contacts_from_excel(filepath, template_text=None, doc=None, add_prefix=T
         df.loc[df['name'] == '', 'name'] = 'Коллеги'
 
     if 'mall' in df.columns:
-        prefixes = ("ТЦ", "ТРЦ", "ТРК", "ТД", "ТК", "Молл")
+        prefixes = ("ТЦ", "ТРЦ", "ТРК", "ТД", "ТК", "Молл", "ТВК", "МТЦ", "МЦ")
         # normalize column: replace quotes, turn NaN -> empty string, strip spaces
         df['mall'] = df['mall'].fillna('').astype(str).str.replace(r'[«»"]', '', regex=True).str.strip()
 
@@ -65,6 +65,8 @@ def get_contacts_from_excel(filepath, template_text=None, doc=None, add_prefix=T
                 raise ValueError(f"❌ Неверный формат email: {e} в строке {idx + 2}")
         primary = parts[0]
         cc = parts[1:]
+
+        # add here
         contact = {
             'email': primary,
             'name': row.get('name', ''),
@@ -77,37 +79,64 @@ def get_contacts_from_excel(filepath, template_text=None, doc=None, add_prefix=T
     
     df = pd.DataFrame(contacts)
 
-    if 'rim' in df.columns and 'mall' in df.columns:
+    # Combine rows for the same recipient (email) so batching won't split parts
+    # of a single recipient across different batches. We always group by email
+    # and aggregate mall/rim information when present.
+    if 'email' in df.columns and not df.empty:
         combined_contacts = []
         for email, email_df in df.groupby('email', as_index=False):
-            name = email_df['name'].iloc[0]
-            city = email_df['city'].iloc[0]
+            name = email_df['name'].iloc[0] if 'name' in email_df.columns else ''
+            city = email_df['city'].iloc[0] if 'city' in email_df.columns else ''
             cc_emails = email_df['_cc_emails'].iloc[0] if '_cc_emails' in email_df.columns else []
+                
 
-            mall_rims_list = []
-            mall_names_list = []
+            mall_combined = ''
+            rim_combined = ''
 
-            for mall_name, mall_df in email_df.groupby('mall', as_index=False):
-                # Add prefix if not already there
-                if add_prefix:
-                    prefixes = ("ТЦ", "ТРЦ", "ТРК", "ТД", "ТК", "Молл")
-                    pat = r'^(?:' + '|'.join(prefixes) + r')\b'
-                    if not re.match(pat, mall_name, re.IGNORECASE):
-                        mall_name_prefixed = "ТЦ " + mall_name
+            if 'mall' in email_df.columns:
+                mall_names_list = []
+                mall_rims_pairs = []  # list of (mall_name_prefixed, rims_text)
+                for mall_name, mall_df in email_df.groupby('mall', as_index=False):
+                    # normalize and optionally add prefix
+                    if add_prefix:
+                        prefixes = ("ТЦ", "ТРЦ", "ТРК", "ТД", "ТК", "Молл", "ТВК", "МТЦ", "МЦ")
+                        pat = r'^(?:' + '|'.join(prefixes) + r')\b'
+                        if not re.match(pat, str(mall_name), re.IGNORECASE):
+                            mall_name_prefixed = "ТЦ " + str(mall_name)
+                        else:
+                            mall_name_prefixed = str(mall_name)
                     else:
-                        mall_name_prefixed = mall_name
-                else:
-                    mall_name_prefixed = mall_name
+                        mall_name_prefixed = str(mall_name)
 
-                mall_names_list.append(mall_name_prefixed)
-                rims_text = '\n'.join(mall_df['rim'].astype(str))
-                if email_df['mall'].nunique() > 1:
-                    mall_rims_list.append(f"{mall_name_prefixed}:\n{rims_text}")
-                else:
-                    mall_rims_list.append(rims_text)
+                    mall_names_list.append(mall_name_prefixed)
 
-            rim_combined = "\n\n".join(mall_rims_list)
-            mall_combined = " и ".join(mall_names_list)
+                    if 'rim' in email_df.columns:
+                        rims_text = '\n'.join(mall_df['rim'].astype(str))
+                        mall_rims_pairs.append((mall_name_prefixed, rims_text))
+
+                # join mall names with commas and 'и' before the last; if two items use ' и '
+                def join_mall_names(names):
+                    names = [n for n in names if n]
+                    if not names:
+                        return ''
+                    if len(names) == 1:
+                        return names[0]
+                    if len(names) == 2:
+                        return f"{names[0]} и {names[1]}"
+                    return ", ".join(names[:-1]) + f" и {names[-1]}"
+
+                mall_combined = join_mall_names(mall_names_list)
+
+                # build rim_combined: if multiple malls, number them and list rims per mall
+                if len(mall_rims_pairs) > 1:
+                    numbered_sections = []
+                    for i, (mname, rims_text) in enumerate(mall_rims_pairs, start=1):
+                        section = f"{i}) {mname}\n{rims_text}".strip()
+                        numbered_sections.append(section)
+                    rim_combined = "\n\n".join(numbered_sections)
+                else:
+                    # single mall: just the rims text (no numbering)
+                    rim_combined = mall_rims_pairs[0][1] if mall_rims_pairs else ''
 
             combined_contacts.append({
                 'email': email,
@@ -115,6 +144,7 @@ def get_contacts_from_excel(filepath, template_text=None, doc=None, add_prefix=T
                 'city': city,
                 'rim': rim_combined,
                 'mall': mall_combined,
+                'mall_count': len(mall_names_list) if 'mall' in email_df.columns else 0,
                 '_cc_emails': cc_emails
             })
 
@@ -244,7 +274,13 @@ def send_batch(my_address, password, batch_contacts, cc_addresses, brand, period
             msg['To'] = contact.get('email', '')
             if all_cc:
                 msg['Cc'] = ", ".join(all_cc)
-            msg['Subject'] = f"{mall_name} (г. {contact.get('city','')}) // {brand} // {period}"
+            # If multiple malls are combined for this contact, omit the city in subject
+            mall_count = int(contact.get('mall_count', 1) or 1)
+            if mall_count > 1:
+                subject = f"{mall_name} // {brand} // {period}"
+            else:
+                subject = f"{mall_name} (г. {contact.get('city','')}) // {brand} // {period}"
+            msg['Subject'] = subject
             msg.attach(MIMEText(message, 'plain'))
 
             recipients = [contact.get('email', '')] + all_cc

@@ -74,7 +74,7 @@ def preview_excel():
     if not file:
         return "❌ Файл не загружен.", 400
 
-    ALLOWED_COLUMNS = ["email", "name", "city", "mall", "rim", "link", "min", "sec", "num", "size"]
+    ALLOWED_COLUMNS = ["email", "name", "city", "mall", "rim", "link", "min", "sec", "num", "size", "email2", "name2"]
 
     try:
         df = pd.read_excel(io.BytesIO(file.read()))
@@ -99,7 +99,7 @@ def preview_excel():
         add_prefix = request.form.get('add_tc_prefix', 'true').lower() == 'true'
 
         if 'mall' in df.columns:
-            prefixes = ("ТЦ", "ТРЦ", "ТРК", "ТД", "ТК", "Молл")
+            prefixes = ("ТЦ", "ТРЦ", "ТРК", "ТД", "ТК", "Молл", "ТВК", "МТЦ", "МЦ")
             # normalize column: replace quotes, turn NaN -> empty string, strip spaces
             df['mall'] = df['mall'].fillna('').astype(str).str.replace('"', '', regex=False).str.strip()
 
@@ -118,7 +118,50 @@ def preview_excel():
         if rims_required.issubset(df.columns):
             print('rims are in place')
             def format_rim_entry(row):
-                return (f"{row['rim']} {row['num']} шт. {row['size']} (ролик {row['sec']}сек в блоке {row['min']} мин.) фото: {row['link']}")
+                # Safely get values and strip whitespace
+                rim = str(row.get('rim', '')).strip()
+                num = str(row.get('num', '')).strip()
+                size = str(row.get('size', '')).strip()
+                link = str(row.get('link', '')).strip()
+                min_ = str(row.get('min', '')).strip()
+                sec = str(row.get('sec', '')).strip()
+
+                # Case: all parts present
+                if num and size and sec and min_ and link:
+                    return f"{rim} {num} шт. {size} (ролик {sec}сек в блоке {min_} мин.) фото: {link}"
+
+                # No num and size, but have sec/min/link
+                if (not num and not size) and sec and min_ and link:
+                    return f"{rim} (ролик {sec}сек в блоке {min_} мин.) фото: {link}"
+
+                # Have sec/min but no link -> omit photo
+                if sec and min_ and not link:
+                    # include num/size if present
+                    if num and size:
+                        return f"{rim} {num} шт. {size} (ролик {sec}сек в блоке {min_} мин.)"
+                    return f"{rim} (ролик {sec}сек в блоке {min_} мин.)"
+
+                # No num/size/link but have sec/min -> same as above
+                if (not num and not size and not link) and sec and min_:
+                    return f"{rim} (ролик {sec}сек в блоке {min_} мин.)"
+
+                # No timing but have link -> show rim and photo
+                if (not num and not size and not sec and not min_) and link:
+                    return f"{rim}, фото: {link}"
+
+                # Fallback: compose available parts
+                parts = [p for p in [rim] if p]
+                if num and size:
+                    parts.append(f"{num} шт. {size}")
+                if sec and min_:
+                    parts.append(f"(ролик {sec}сек в блоке {min_} мин.)")
+                elif sec:
+                    parts.append(f"(ролик {sec}сек)")
+                if link:
+                    parts.append(f"фото: {link}")
+
+                return ' '.join(parts).strip()
+
             df['rim'] = df.apply(format_rim_entry, axis=1)
 
         if 'rim' in df.columns:
@@ -179,7 +222,7 @@ def send():
             try:
                 batch_size = int(request.form.get('batch_size', '25'))
             except Exception:
-                batch_size = 1
+                batch_size = 25
 
             try:
                 pause_seconds = int(request.form.get('pause_seconds', '90'))
