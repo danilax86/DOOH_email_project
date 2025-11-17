@@ -10,12 +10,18 @@ import pandas as pd
 import pytest
 from flask import url_for
 
-# import app objects
 import run as run_app
 from app import email_sender as es
+def test_split_emails_various_separators():
+    s = "a@a.com, b@b.com; c@c.com / d@d.com | e@e.com и f@f.com"
+    parts = es.split_emails(s)
 
+    assert "a@a.com" in parts
+    assert "f@f.com" in parts
+    assert len(parts) >= 6
 
-# -------- helpers used in tests --------
+# хэлперы
+
 def make_excel_bytes(df: pd.DataFrame) -> bytes:
     """Return Excel bytes for multipart upload."""
     bio = io.BytesIO()
@@ -33,7 +39,6 @@ class DummySMTP:
         self.context = context
         self.sent_messages = []
 
-    # context manager API
     def __enter__(self):
         return self
 
@@ -50,7 +55,6 @@ class DummySMTP:
         pass
 
     def login(self, user, password):
-        # simulate successful login
         if user == "bad@example.com":
             raise Exception("Auth failed")
         return True
@@ -58,7 +62,6 @@ class DummySMTP:
     def send_message(self, msg, from_addr=None, to_addrs=None):
         self.sent_messages.append((from_addr, to_addrs, str(msg)))
 
-    # compatibility with smtplib.SMTP_SSL and smtplib.SMTP
     def quit(self):
         pass
 
@@ -73,7 +76,6 @@ class SyncThread:
         self.daemon = daemon
 
     def start(self):
-        # run synchronously
         if self._target:
             self._target(*self._args, **self._kwargs)
 
@@ -81,7 +83,7 @@ class SyncThread:
         return
 
 
-# -------- tests --------
+# тесты 
 
 @pytest.fixture(autouse=True)
 def temp_upload_folder(tmp_path, monkeypatch):
@@ -95,7 +97,6 @@ def temp_upload_folder(tmp_path, monkeypatch):
 def test_preview_excel_success(monkeypatch):
     client = run_app.app.test_client()
 
-    # Create DataFrame with required columns and extra columns present
     df = pd.DataFrame([
         {"email": "alice@example.com", "name": "Alice", "city": "Moscow", "mall": 'Mega', "rim": "RIM1", "num":"1", "size":"M", "link":"http://img", "min":"1", "sec":"10"}
     ])
@@ -110,7 +111,6 @@ def test_preview_excel_success(monkeypatch):
     resp = client.post("/preview-excel", data=data, content_type='multipart/form-data')
     assert resp.status_code == 200
     text = resp.get_data(as_text=True)
-    # should include the preview table and the hidden first-row data attributes for mall/city
     assert '<table' in text
     assert 'id="first-row-data"' in text
     assert 'data-mall="' in text and 'data-city="' in text
@@ -119,7 +119,6 @@ def test_preview_excel_success(monkeypatch):
 def test_preview_excel_missing_columns():
     client = run_app.app.test_client()
 
-    # missing 'mall' and 'city' -> required columns are email, mall, city -> should return 400
     df = pd.DataFrame([{"email": "bob@example.com", "name": "Bob"}])
     b = make_excel_bytes(df)
 
@@ -135,7 +134,6 @@ def test_preview_excel_missing_columns():
 def test_preview_excel_empty_email_row():
     client = run_app.app.test_client()
 
-    # include an empty email row -> should return 400 with message about rows without email
     df = pd.DataFrame([
         {"email": "carol@example.com", "name": "Carol", "mall": "Mall", "city": "Sochi"},
         {"email": "", "name": "Empty", "mall": "Mall", "city": "Sochi"}
@@ -152,7 +150,6 @@ def test_preview_excel_empty_email_row():
 
 
 def test_get_contacts_from_excel_and_grouping(tmp_path):
-    # Integration-like test for get_contacts_from_excel: create real excel file and call function
     df = pd.DataFrame([
         {"email": "a@example.com", "name": "A", "mall": "Mall1", "city": "Msk", "rim": "R1", "num": "1", "size": "S", "link": "L", "min": "1", "sec": "5"},
         {"email": "a@example.com", "name": "A", "mall": "Mall2", "city": "Msk", "rim": "R2", "num": "2", "size": "M", "link": "L2", "min": "2", "sec": "10"},
@@ -162,21 +159,17 @@ def test_get_contacts_from_excel_and_grouping(tmp_path):
     df.to_excel(fp, index=False)
 
     contacts = es.get_contacts_from_excel(str(fp), template_text=None, add_prefix=True)
-    # should return a list of combined contacts grouped by email
     emails = sorted([c['email'] for c in contacts])
     assert emails == ["a@example.com", "b@example.com"]
-    # for 'b' name should be filled with 'Коллеги' because empty
     for c in contacts:
         if c['email'] == 'b@example.com':
             assert c['name'] == 'Коллеги' or c['name'] != ''
-    # the first contact (a@example.com) should have mall_count > 1
     for c in contacts:
         if c['email'] == 'a@example.com':
             assert c['mall_count'] >= 2 or c['mall'] != ''
 
 
 def test_send_batch_uses_smtp(monkeypatch):
-    # monkeypatch SMTP_SSL to use DummySMTP and verify send_batch returns proper sent count
     dummy_server = DummySMTP()
 
     def fake_smtp_ssl(host, port, context=None):
@@ -205,24 +198,21 @@ def test_send_batch_uses_smtp(monkeypatch):
         display_name="Me"
     )
     assert sent == len(contacts)
-    # Dummy server recorded messages
     assert len(dummy_server.sent_messages) == len(contacts)
 
 
 def test_send_emails_endpoint_flow(monkeypatch, tmp_path):
     client = run_app.app.test_client()
 
-    # prepare a small excel to upload (content not read because we patch the reader)
     df = pd.DataFrame([{"email": "alice@example.com", "name": "Alice", "mall": "Mall", "city": "Msk"}])
     excel_bytes = make_excel_bytes(df)
 
-    # set session (simulate logged in user)
+    # фейковые параметры сессии
     with client.session_transaction() as sess:
         sess['MY_ADDRESS'] = 'me@example.com'
         sess['PASSWORD'] = 'pw'
         sess['DISPLAY_NAME'] = 'Me'
 
-    # monkeypatch get_contacts_from_excel to return 3 fake contacts
     fake_contacts = [
         {"email": "a1@example.com", "name": "A1", "city": "Msk", "rim": "", "mall": "M1", "mall_count": 1, "_cc_emails": []},
         {"email": "a2@example.com", "name": "A2", "city": "Msk", "rim": "", "mall": "M2", "mall_count": 1, "_cc_emails": []},
@@ -230,43 +220,32 @@ def test_send_emails_endpoint_flow(monkeypatch, tmp_path):
     ]
 
     monkeypatch.setattr(run_app, "get_contacts_from_excel", lambda path, **kwargs: fake_contacts)
-    # but the send() function imports get_contacts_from_excel from app.email_sender; patch that too
     monkeypatch.setattr(es, "get_contacts_from_excel", lambda path, **kwargs: fake_contacts)
 
-    # patch send_batch to pretend to send and return number of messages sent for the batch
     def fake_send_batch(**kwargs):
-        # return number of messages in this batch
         return len(kwargs.get('batch_contacts', []))
 
     monkeypatch.setattr(es, "send_batch", fake_send_batch)
 
-    # run background thread synchronously by replacing threading.Thread with our SyncThread
     monkeypatch.setattr(threading, "Thread", SyncThread)
 
     data = {
         "contacts_file": (io.BytesIO(excel_bytes), "contacts.xlsx"),
         "message_template": "Hello ${NAME}",
-        "batch_size": "2",  # force batching into 2 and 1
+        "batch_size": "2", 
         "pause_seconds": "0"
     }
 
     resp = client.post("/send-emails", data=data, content_type='multipart/form-data', follow_redirects=True)
     assert resp.status_code == 200
     text = resp.get_data(as_text=True)
-    # response should include "Письма отправляются..." or similar status
     assert "Письма отправляются" in text or "Письма" in text
 
-    # extract job_id from response by searching for 'job_id=' in returned html (status.html renders it)
-    # If the template assigned job_id into a JS var or element, we can find it in the page.
-    # But send() returns status.html and includes job_id variable in context, so we can instead
-    # find the single job in run_app.app.jobs
     assert run_app.app.jobs, "No jobs created"
 
-    # there should be exactly one job created by this test
     job_id = next(iter(run_app.app.jobs.keys()))
     job = run_app.app.jobs[job_id]
 
-    # Because we ran the thread synchronously, job should be marked done and sent equal to number of contacts
     assert job['done'] is True
     assert job['sent'] == len(fake_contacts)
     assert "Письма успешно отправлены" in job['status'] or "успешно" in job['status']
