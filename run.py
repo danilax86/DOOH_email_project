@@ -28,6 +28,12 @@ app.secret_key = os.urandom(24)
 app.jobs = {}
 
 
+@app.route('/health')
+def health_check():
+    """Health check endpoint for monitoring and container orchestration."""
+    return jsonify({"status": "healthy"}), 200
+
+
 @app.route('/')
 def index():
     if 'MY_ADDRESS' not in session or 'PASSWORD' not in session:
