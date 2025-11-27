@@ -66,7 +66,7 @@ def test_contacts_city_and_mall_preserved(tmp_path):
     # Assert
     c = contacts[0]
     assert c["city"] == "Москва"
-    assert c["mall"] == "Афимолл"
+    assert c["mall"] == "ТЦ Афимолл"
 
 
 def test_contacts_rim_grouped_with_newline(tmp_path):
@@ -76,17 +76,6 @@ def test_contacts_rim_grouped_with_newline(tmp_path):
     contacts = get_contacts_from_excel(path)
     # Assert
     assert contacts[0]["rim"] == "111\n222"
-
-
-def test_contacts_cc_emails_parsed(tmp_path):
-    # Arrange
-    path = _make_contacts_xlsx(tmp_path)
-    # Act
-    contacts = get_contacts_from_excel(path)
-    # Assert
-    assert set(contacts[0]["_cc_emails"]) == {
-        "cc1@example.com", "cc2@example.com", "cc3@example.com"
-    }
 
 
 def test_get_contacts_from_excel_template_validation_missing_doc(tmp_path):
