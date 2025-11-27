@@ -11,6 +11,7 @@ __pycache__/
 contacts.xlsx
 **/data/*.xlsx
 
+
 # Distribution / packaging
 .Python
 build/
@@ -219,3 +220,4 @@ __marimo__/
 .idea
 .idea/.gitignore
 app/data/contacts.xlsx
+test-results/*
