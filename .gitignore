@@ -11,6 +11,7 @@ __pycache__/
 contacts.xlsx
 **/data/*.xlsx
 
+
 # Distribution / packaging
 .Python
 build/
@@ -221,3 +222,4 @@ __marimo__/
 app/data/contacts.xlsx
 
 test-results/
+test-results/*
