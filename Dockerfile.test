@@ -1,0 +1,25 @@
+# python image with playwright
+FROM mcr.microsoft.com/playwright/python:v1.42.0-jammy 
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y \
+    python3-pip \
+    && rm -rf /var/lib/apt/lists/*
+
+ENV PYTHONPATH=/app
+
+COPY requirements.txt requirements-test.txt ./
+
+RUN pip install --no-cache-dir -r requirements.txt -r requirements-test.txt
+
+RUN playwright install --with-deps
+
+COPY . .
+
+RUN mkdir -p /app/test-results && \
+    chmod 777 /app/test-results
+
+WORKDIR /app
+
+CMD ["pytest", "e2e_test/", "-v", "--html=/app/test-results/report.html", "--self-contained-html"]

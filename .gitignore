@@ -220,4 +220,6 @@ __marimo__/
 .idea
 .idea/.gitignore
 app/data/contacts.xlsx
+
+test-results/
 test-results/*
