@@ -289,11 +289,7 @@ def send():
         except Exception as e:
             app.jobs[job_id].update({'status': f"❌ Ошибка: {str(e)}", 'error': str(e), 'done': True, 'done_at': time.time()})
         finally:
-            try:
-                if os.path.isfile(file_path):
-                    os.unlink(file_path)
-            except OSError:
-                pass
+            uploaded_file.close()
 
     thread = threading.Thread(target=run_job, daemon=True)
     thread.start()
