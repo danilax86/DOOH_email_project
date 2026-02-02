@@ -226,8 +226,7 @@ def send():
     if not uploaded_file or uploaded_file.filename == '':
         return render_template("status.html", status="❌ Файл не загружен.")
 
-    filename = secure_filename(uploaded_file.filename)
-    file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+    file_path = os.path.join(app.config['UPLOAD_FOLDER'], 'contacts.xlsx')
     uploaded_file.save(file_path)
     template_text = request.form.get('message_template', '')
     add_prefix = request.form.get('add_tc_prefix', 'true').lower() == 'true'
