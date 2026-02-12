@@ -1,17 +1,19 @@
 # run.py
 
 import io
-from flask import Flask, render_template, request, jsonify, session, redirect, url_for
-import threading
-from uuid import uuid4
 import math
-import time
-from app.email_sender import send_batch, get_contacts_from_excel, pluralize
 import os
-from dotenv import load_dotenv
-from werkzeug.utils import secure_filename
+import threading
+import time
 import traceback
+from uuid import uuid4
+
 import pandas as pd
+from dotenv import load_dotenv
+from flask import Flask, jsonify, redirect, render_template, request, session, url_for
+from werkzeug.utils import secure_filename
+
+from app.email_sender import get_contacts_from_excel, pluralize, send_batch
 
 load_dotenv()
 
@@ -24,8 +26,25 @@ app.config['UPLOAD_FOLDER'] = os.path.join(app.root_path, 'app', 'data')
 app.secret_key = os.urandom(24)
 
 # simple in-memory job registry for background sending tasks
-# job structure: { 'status': str, 'batch': int, 'total': int or None, 'sent': int, 'error': str or None, 'done': bool }
+# job structure: { 'status': str, 'batch': int, 'total': int or None, 'sent': int, 'error': str or None, 'done': bool, 'done_at': float or None }
 app.jobs = {}
+JOB_RETENTION_SECONDS = 7200
+JOB_REGISTRY_MAX_SIZE = 500
+
+
+def _evict_old_jobs():
+    """Remove done jobs older than JOB_RETENTION_SECONDS and cap registry at JOB_REGISTRY_MAX_SIZE to avoid unbounded memory growth."""
+    now = time.time()
+    cutoff = now - JOB_RETENTION_SECONDS
+    to_remove = [jid for jid, job in app.jobs.items() if job.get('done') and job.get('done_at', 0) < cutoff]
+    for jid in to_remove:
+        del app.jobs[jid]
+    while len(app.jobs) > JOB_REGISTRY_MAX_SIZE:
+        done_ids = [jid for jid, job in app.jobs.items() if job.get('done')]
+        if not done_ids:
+            break
+        oldest = min(done_ids, key=lambda jid: app.jobs[jid].get('done_at', 0))
+        del app.jobs[oldest]
 
 
 @app.route('/health')
@@ -207,8 +226,7 @@ def send():
     if not uploaded_file or uploaded_file.filename == '':
         return render_template("status.html", status="❌ Файл не загружен.")
 
-    filename = secure_filename(uploaded_file.filename)
-    file_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+    file_path = os.path.join(app.config['UPLOAD_FOLDER'], 'contacts.xlsx')
     uploaded_file.save(file_path)
     template_text = request.form.get('message_template', '')
     add_prefix = request.form.get('add_tc_prefix', 'true').lower() == 'true'
@@ -216,7 +234,7 @@ def send():
     if not display_name and my_address:
         display_name = my_address.split('@')[0].replace('.', ' ').title()
 
-    # run sending in a background thread to allow immediate response and progress polling
+    _evict_old_jobs()
     job_id = str(uuid4())
     app.jobs[job_id] = {'status': 'Queued', 'batch': 0, 'total': None, 'sent': 0, 'error': None, 'done': False}
 
@@ -224,26 +242,21 @@ def send():
         try:
             contacts = get_contacts_from_excel(file_path, template_text=template_text, doc=doc, add_prefix=add_prefix)
             total_contacts = len(contacts)
-            # read batch size and pause interval from the form (defaults)
             try:
                 batch_size = int(request.form.get('batch_size', '25'))
             except Exception:
                 batch_size = 25
-
             try:
                 pause_seconds = int(request.form.get('pause_seconds', '90'))
             except Exception:
                 pause_seconds = 90
-
             total_batches = math.ceil(total_contacts / batch_size) if total_contacts > 0 else 0
             app.jobs[job_id].update({'status': 'Running', 'total': total_batches})
-
             cumulative_sent = 0
             for batch_index in range(total_batches):
                 start = batch_index * batch_size
                 end = min(start + batch_size, total_contacts)
                 batch_contacts = contacts[start:end]
-
                 try:
                     sent = send_batch(
                         my_address=my_address,
@@ -257,28 +270,25 @@ def send():
                         display_name=display_name
                     )
                 except Exception as e:
-                    # record error and stop
-                    app.jobs[job_id].update({'status': f"❌ Ошибка при отправке: {str(e)}", 'error': str(e), 'done': True})
+                    app.jobs[job_id].update({'status': f"❌ Ошибка при отправке: {str(e)}", 'error': str(e), 'done': True, 'done_at': time.time()})
                     return
-
                 cumulative_sent += sent
-                # update job state so clients can poll for progress
                 app.jobs[job_id].update({
                     'status': f'Отправлено {batch_index + 1}/{total_batches}',
                     'batch': batch_index + 1,
                     'total': total_batches,
                     'sent': cumulative_sent
                 })
-
                 if batch_index + 1 < total_batches:
                     print(f"Waiting {pause_seconds} seconds before next batch ({batch_index + 1}/{total_batches})...")
                     time.sleep(pause_seconds)
-
             count = len(contacts)
             word = pluralize(count, ("адрес", "адреса", "адресов"))
-            app.jobs[job_id].update({'status': f"✅ Письма успешно отправлены на {count} {word}.", 'done': True})
+            app.jobs[job_id].update({'status': f"✅ Письма успешно отправлены на {count} {word}.", 'done': True, 'done_at': time.time()})
         except Exception as e:
-            app.jobs[job_id].update({'status': f"❌ Ошибка: {str(e)}", 'error': str(e), 'done': True})
+            app.jobs[job_id].update({'status': f"❌ Ошибка: {str(e)}", 'error': str(e), 'done': True, 'done_at': time.time()})
+        finally:
+            uploaded_file.close()
 
     thread = threading.Thread(target=run_job, daemon=True)
     thread.start()
@@ -296,4 +306,4 @@ def send_status(job_id):
 
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(debug=False)
