@@ -17,9 +17,9 @@ RUN playwright install --with-deps
 
 COPY . .
 
-RUN mkdir -p /app/test-results && \
-    chmod 777 /app/test-results
+RUN mkdir -p /app/test/test-results && \
+    chmod 777 /app/test/test-results
 
 WORKDIR /app
 
-CMD ["pytest", "e2e_test/", "-v", "--html=/app/test-results/report.html", "--self-contained-html"]
+CMD ["pytest", "app/test/e2e_test/", "-v", "--html=/app/test/test-results/report.html", "--self-contained-html"]

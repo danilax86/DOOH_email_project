@@ -40,7 +40,7 @@ def page(playwright: Playwright, base_url: str) -> Generator[Page, None, None]:
         print(f"{response.status if response else 'No response'}")
     except Exception as e:
         print(str(e))
-        page.screenshot(path="/app/test-results/initial_page_load_error.png")
+        page.screenshot(path="/app/test/test-results/initial_page_load_error.png")
         raise
     yield page
     try:

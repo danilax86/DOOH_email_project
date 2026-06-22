@@ -97,11 +97,11 @@ class TestCompleteEmailFlow:
                 keyword in status_text.lower()
                 for keyword in ["ошибка", "error", "не удалось"]
             ):
-                page.screenshot(path='/app/test-results/e2e_error.png')
+                page.screenshot(path='/app/test/test-results/e2e_error.png')
                 raise Exception(f"Error in email sending: {status_text}")
             time.sleep(1)
         else:
-            page.screenshot(path='/app/test-results/e2e_timeout.png')
+            page.screenshot(path='/app/test/test-results/e2e_timeout.png')
             raise Exception(
                 f"Timed out waiting for email sending to complete. Last status: {last_status}"
             )
@@ -121,4 +121,4 @@ class TestCompleteEmailFlow:
         for email in emails:
             assert email.subject != "", "Email subject should not be empty"
             assert email.body != "", "Email body should not be empty"
-        page.screenshot(path='/app/test-results/e2e_end.png')
+        page.screenshot(path='/app/test/test-results/e2e_end.png')
