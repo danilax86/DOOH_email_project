@@ -9,12 +9,18 @@ import time
 from uuid import uuid4
 
 import pandas as pd
-from app.sheet_transformer import (
-    filters_from_json,
-    inspect_sheet_source,
-    transform_sheet_source,
-    workbook_to_bytes,
-)
+
+try:
+    from app.sheet_transformer import (
+        filters_from_json,
+        inspect_sheet_source,
+        transform_sheet_source,
+        workbook_to_bytes,
+    )
+
+    SHEET_TRANSFORMER_AVAILABLE = True
+except ModuleNotFoundError:
+    SHEET_TRANSFORMER_AVAILABLE = False
 from dotenv import load_dotenv
 from flask import (
     Flask,
@@ -178,11 +184,23 @@ def login():
 
 @app.route("/sheet", methods=["GET"])
 def sheet_page():
+    if not SHEET_TRANSFORMER_AVAILABLE:
+        return (
+            render_template(
+                "status.html", status="❌ Sheet module is not installed on server."
+            ),
+            503,
+        )
     return render_template("sheet.html")
 
 
 @app.route("/sheet/state", methods=["GET", "POST"])
 def sheet_state():
+    if not SHEET_TRANSFORMER_AVAILABLE:
+        return jsonify(
+            {"error": "Sheet tools are not available on this deployment"}
+        ), 503
+
     if request.method == "POST":
         state_id, state = _get_sheet_state(create=True)
         if not state:
@@ -238,6 +256,11 @@ def sheet_state():
 
 @app.route("/sheet/inspect", methods=["POST"])
 def sheet_inspect():
+    if not SHEET_TRANSFORMER_AVAILABLE:
+        return jsonify(
+            {"error": "Sheet tools are not available on this deployment"}
+        ), 503
+
     uploaded_file = request.files.get("source_file")
     source_url = request.form.get("source_url", "").strip() or None
 
@@ -276,6 +299,11 @@ def sheet_inspect():
 
 @app.route("/sheet/export", methods=["POST"])
 def sheet_export():
+    if not SHEET_TRANSFORMER_AVAILABLE:
+        return jsonify(
+            {"error": "Sheet tools are not available on this deployment"}
+        ), 503
+
     uploaded_file = request.files.get("source_file")
     source_url = request.form.get("source_url", "").strip() or None
     brand = request.form.get("brand", "").strip()
