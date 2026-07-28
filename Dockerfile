@@ -29,10 +29,14 @@ ENV PYTHONUNBUFFERED=1
 
 EXPOSE 5000
 
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+  CMD curl -fsS http://localhost:5000/health || exit 1
+
 # Create a non-root user
 RUN useradd -m -u 1000 user
 RUN chown -R user:user /app
 USER user
 
-# Run the app with gunicorn
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "run:app", "--workers", "1", "--log-level", "error", "--timeout", "0"]
+# Run app with a threaded worker and bounded request timeout.
+# This prevents a single hung request from blocking all traffic forever.
+CMD ["gunicorn", "--bind", "0.0.0.0:5000", "run:app", "--worker-class", "gthread", "--workers", "1", "--threads", "8", "--timeout", "120", "--graceful-timeout", "30", "--keep-alive", "5", "--max-requests", "1000", "--max-requests-jitter", "100", "--log-level", "info"]
