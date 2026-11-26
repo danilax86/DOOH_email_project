@@ -208,6 +208,7 @@ function initDelayedSubmit() {
   const contactsInput = document.getElementById("contacts_file");
   const brandInput = document.querySelector('input[name="brand"]');
   const periodInput = document.querySelector('input[name="period"]');
+  const ccInput = document.querySelector('input[name="cc_list"]');
   const templateInput = document.getElementById("message_template");
 
   let countdownTimer;
@@ -224,6 +225,7 @@ function initDelayedSubmit() {
   if (delayedBtn) {
     delayedBtn.addEventListener("click", () => {
       if (!validateForm()) return;
+      if (!ccInput.value.trim() && !window.confirm("Никого нет в копии! Вы уверены, что все ОК?")) return;
       secondsLeft = 5;
       countdownText.textContent = `Отправка через ${secondsLeft} сек...`;
       countdownBox.style.display = "block";
