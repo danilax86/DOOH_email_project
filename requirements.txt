@@ -3,4 +3,5 @@ pandas
 python-dotenv
 openpyxl
 gunicorn
+cryptography
 

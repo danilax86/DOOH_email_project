@@ -13,8 +13,9 @@
 					return r.json();
 				})
 				.then(data => {
-					if (data.status) box.textContent = data.status;
-					if (!data.done) {
+					if (data.message) box.textContent = data.message;
+					box.dataset.state = data.state || '';
+					if (data.state !== 'completed' && data.state !== 'error') {
 						// poll again shortly
 						setTimeout(poll, 2000);
 					}
